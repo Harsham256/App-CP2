@@ -1,0 +1,6 @@
+@TitleVerification.Api_HostAddress = http://localhost:5067
+
+GET {{TitleVerification.Api_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
