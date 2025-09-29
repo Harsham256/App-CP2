@@ -1,7 +1,4 @@
-﻿
-
-
-using Microsoft.AspNetCore.Mvc;
+﻿using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using TitleVerification.Api.Data;
 using TitleVerification.Api.Models;
@@ -13,12 +10,10 @@ namespace TitleVerification.Api.Controllers
     public class AdminController : ControllerBase
     {
         private readonly ApplicationDbContext _context;
-        private readonly ILogger<AdminController> _logger;
 
-        public AdminController(ApplicationDbContext context, ILogger<AdminController> logger)
+        public AdminController(ApplicationDbContext context)
         {
             _context = context;
-            _logger = logger;
         }
 
         [HttpGet("users")]
@@ -41,29 +36,18 @@ namespace TitleVerification.Api.Controllers
         [HttpGet("documents")]
         public async Task<IActionResult> GetDocuments()
         {
-            try
-            {
-                var docs = await _context.Documents
-                    .Include(d => d.User)
-                    .Select(d => new
-                    {
-                        documentID = d.DocumentID,
-                        userID = d.UserId,
-                        userName = d.User != null ? d.User.Name : "Unknown",
-                        status = d.Status,
-                        uploadedAt = d.UploadedAt,
-                        viewUrl = $"/api/document/view/{d.DocumentID}"
-                    })
-                    .OrderByDescending(d => d.uploadedAt)
-                    .ToListAsync();
+            var docs = await _context.Documents
+                .Select(d => new
+                {
+                    documentID = d.DocumentID,
+                    userID = d.UserId,
+                    filePath = d.FilePath,
+                    status = d.Status,
+                    uploadedAt = d.UploadedAt
+                })
+                .ToListAsync();
 
-                return Ok(docs);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error fetching documents for admin");
-                return StatusCode(500, "Internal Server Error");
-            }
+            return Ok(docs);
         }
 
         [HttpPost("documents/{id}/approve")]
@@ -75,7 +59,7 @@ namespace TitleVerification.Api.Controllers
             doc.Status = "Approved";
             await _context.SaveChangesAsync();
 
-            return Ok("✅ Document approved");
+            return Ok(new { message = "Approved" });
         }
 
         [HttpPost("documents/{id}/reject")]
@@ -87,7 +71,7 @@ namespace TitleVerification.Api.Controllers
             doc.Status = "Rejected";
             await _context.SaveChangesAsync();
 
-            return Ok("❌ Document rejected");
+            return Ok(new { message = "Rejected" });
         }
 
         [HttpDelete("users/{id}")]
@@ -103,5 +87,3 @@ namespace TitleVerification.Api.Controllers
         }
     }
 }
-
-

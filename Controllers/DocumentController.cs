@@ -21,124 +21,87 @@ namespace TitleVerification.Api.Controllers
             _logger = logger;
         }
 
-        // GET /api/document/view/{id}
-        [HttpGet("view/{id}")]
-        public async Task<IActionResult> ViewDocument(int id)
+        // ✅ GET /api/document/my?userId={userId}
+        [HttpGet("my")]
+        public async Task<IActionResult> GetUserDocuments([FromQuery] int userId)
         {
-            var document = await _context.Documents.FirstOrDefaultAsync(d => d.DocumentID == id);
-            if (document == null) return NotFound("Document not found");
+            var documents = await _context.Documents
+                .Where(d => d.UserId == userId)
+                .OrderByDescending(d => d.UploadedAt)
+                .ToListAsync();
 
-            var downloadUrl = $"/api/document/download/{id}";
-            var fileUrl = $"/api/document/inline/{id}";
-            var approveUrl = $"/api/admin/documents/{id}/approve";
-            var rejectUrl = $"/api/admin/documents/{id}/reject";
+            if (documents == null || documents.Count == 0)
+                return NotFound("No documents found for this user.");
 
-            var html = $@"
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Document Viewer</title>
-    <style>
-        body, html {{
-            margin: 0;
-            padding: 0;
-            height: 100%;
-            width: 100%;
-            font-family: Arial, sans-serif;
-        }}
-        iframe {{
-            width: 100%;
-            height: calc(100% - 50px);
-            border: none;
-        }}
-        .toolbar {{
-            height: 50px;
-            background-color: #222;
-            color: white;
-            display: flex;
-            align-items: center;
-            padding: 0 15px;
-        }}
-        .toolbar button {{
-            margin-right: 10px;
-            padding: 8px 14px;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 14px;
-        }}
-        .toolbar button.download {{ background-color: #007bff; color: white; }}
-        .toolbar button.download:hover {{ background-color: #0056b3; }}
-        .toolbar button.approve {{ background-color: #28a745; color: white; }}
-        .toolbar button.approve:hover {{ background-color: #1e7e34; }}
-        .toolbar button.reject {{ background-color: #dc3545; color: white; }}
-        .toolbar button.reject:hover {{ background-color: #b21f2d; }}
-    </style>
-</head>
-<body>
-    <div class='toolbar'>
-        <button class='download' onclick=""window.location.href='{downloadUrl}'"">⬇ Download</button>
-        <button class='approve' onclick='approveDoc()'>✔ Approve</button>
-        <button class='reject' onclick='rejectDoc()'>✖ Reject</button>
-    </div>
-    <iframe src='{fileUrl}'></iframe>
-    <script>
-        async function approveDoc() {{
-            if (!confirm('Approve this document?')) return;
-            const res = await fetch('{approveUrl}', {{ method: 'POST' }});
-            alert(await res.text());
-        }}
-        async function rejectDoc() {{
-            if (!confirm('Reject this document?')) return;
-            const res = await fetch('{rejectUrl}', {{ method: 'POST' }});
-            alert(await res.text());
-        }}
-    </script>
-</body>
-</html>";
-
-            return Content(html, "text/html");
+            return Ok(documents);
         }
 
-        // GET /api/document/inline/{id} (for iframe)
-        [HttpGet("inline/{id}")]
-        public async Task<IActionResult> InlineDocument(int id)
+        // ✅ GET /api/document/report/{id}
+        [HttpGet("report/{id}")]
+        public async Task<IActionResult> GetReport(int id)
         {
-            var document = await _context.Documents.FirstOrDefaultAsync(d => d.DocumentID == id);
-            if (document == null) return NotFound("Document not found");
+            var document = await _context.Documents
+                .Include(d => d.User)
+                .Include(d => d.LandRecord)
+                .FirstOrDefaultAsync(d => d.DocumentID == id);
 
-            var rootPath = _env.WebRootPath ?? Path.Combine(Directory.GetCurrentDirectory(), "wwwroot");
-            var filePath = Path.Combine(rootPath, "Uploads", document.FilePath);
+            if (document == null)
+                return NotFound("Document not found.");
 
-            if (!System.IO.File.Exists(filePath)) return NotFound("File not found");
+            var report = new
+            {
+                DocumentID = document.DocumentID,
+                UserName = document.User?.Name,
+                UploadedAt = document.UploadedAt,
+                Status = document.Status,
+                LandID = document.LandRecord?.LandId,
+                Address = document.LandRecord?.Address,
+                Coordinates = new
+                {
+                    Latitude = document.LandRecord?.Latitude,
+                    Longitude = document.LandRecord?.Longitude
+                },
+                YearOfExistence = document.LandRecord?.YearOfExistence,
+                Ownership = document.LandRecord?.Ownership,
+                SiblingApproval = document.LandRecord?.SiblingApproval,
+                LoanOrDispute = document.LandRecord?.HasDispute,
+                RestrictedType = document.LandRecord?.RestrictedType
+            };
 
-            var provider = new FileExtensionContentTypeProvider();
-            if (!provider.TryGetContentType(filePath, out var contentType))
-                contentType = "application/octet-stream";
-
-            var fileBytes = await System.IO.File.ReadAllBytesAsync(filePath);
-            return File(fileBytes, contentType);
+            return Ok(report);
         }
 
-        // GET /api/document/download/{id}
-        [HttpGet("download/{id}")]
-        public async Task<IActionResult> DownloadDocument(int id)
+        // ✅ POST /api/document/upload
+        [HttpPost("upload")]
+        public async Task<IActionResult> UploadDocument([FromForm] IFormFile file, [FromForm] int userId)
         {
-            var document = await _context.Documents.FirstOrDefaultAsync(d => d.DocumentID == id);
-            if (document == null) return NotFound("Document not found");
+            if (file == null || file.Length == 0)
+                return BadRequest("No file uploaded.");
 
-            var rootPath = _env.WebRootPath ?? Path.Combine(Directory.GetCurrentDirectory(), "wwwroot");
-            var filePath = Path.Combine(rootPath, "Uploads", document.FilePath);
+            var uploadsFolder = Path.Combine(_env.WebRootPath ?? Path.Combine(Directory.GetCurrentDirectory(), "wwwroot"), "Uploads");
+            if (!Directory.Exists(uploadsFolder))
+                Directory.CreateDirectory(uploadsFolder);
 
-            if (!System.IO.File.Exists(filePath)) return NotFound("File not found");
+            var fileName = $"{Guid.NewGuid()}_{file.FileName}";
+            var filePath = Path.Combine(uploadsFolder, fileName);
 
-            var provider = new FileExtensionContentTypeProvider();
-            if (!provider.TryGetContentType(filePath, out var contentType))
-                contentType = "application/octet-stream";
+            using (var stream = new FileStream(filePath, FileMode.Create))
+            {
+                await file.CopyToAsync(stream);
+            }
 
-            var fileBytes = await System.IO.File.ReadAllBytesAsync(filePath);
-            return File(fileBytes, contentType, document.FilePath); // forces download
+            var document = new Document
+            {
+                UserId = userId,
+                FilePath = fileName,
+                UploadedAt = DateTime.UtcNow,
+                Status = "Pending"
+            };
+
+            _context.Documents.Add(document);
+            await _context.SaveChangesAsync();
+
+            return Ok(new { message = "Document uploaded successfully", documentId = document.DocumentID });
         }
     }
 }
-
